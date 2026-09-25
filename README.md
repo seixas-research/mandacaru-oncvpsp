@@ -1,108 +1,110 @@
-# mandacaru-oncvpsp
+# Mandacaru Optimized Norm-Conserved Vanderbilt Psedopotentials (ONCVPSP)
 
 Optimized norm-conserving Vanderbilt pseudopotentials (ONCVPSP) for
-[Mandacaru](https://github.com/seixas-research/mandacaru), one file per element
-for every element with **Z ≤ 92** (H through U). The datasets are generated
-from scratch by Mandacaru's own LDA radial atomic solver and its
-`mandacaru.pseudopotentials.oncv` module; nothing here is copied
-from another pseudopotential code.
+[Mandacaru](https://github.com/seixas-research/mandacaru): one file per
+element for every element with **Z ≤ 92** (H through U). Mandacaru generates
+them from scratch with its own all-electron radial solver and its
+`mandacaru.pseudopotentials.oncv` module; nothing here comes from another code.
 
-They live in this repository, not in Mandacaru itself, because of their size:
-about 110 MB for the 92 files, against the 100 MB limit of a PyPI release.
-The Troullier–Martins (NCPP) library, 11 MB, still ships inside the package.
+The datasets live here, not in the Mandacaru package, because of their size
+(about 125 MB).
+
+## Contents
+
+| Folder | Datasets | Reference atom |
+|---|---|---|
+| `lda/` | 92 (H–U) | LDA, scalar-relativistic, nonlinear core correction |
+
+Mandacaru reads `<checkout>/<xc>/`, so a PBE set would go in `pbe/` beside
+`lda/`.
 
 ## Using the datasets
 
-Point Mandacaru at a checkout of this repository once; it creates a symbolic
-link `library/oncvpsp` inside the installed package, and the loaders take it
-from there:
-
 ```bash
-git clone git@github.com:seixas-research/mandacaru-oncvpsp.git
-python -m mandacaru.pseudopotentials.link_library --oncvpsp mandacaru-oncvpsp
+git clone https://github.com/seixas-research/mandacaru-oncvpsp
+mandacaru --set-oncvpsp /path/to/mandacaru-oncvpsp   # writes MANDACARU_ONCVPSP_PATH
+# open a new terminal, then
+mandacaru --pseudo-status
 ```
 
-Use `--files` to link each dataset individually instead of the directory,
-`--force` to replace an existing link, `--status` to see what each family
-folder serves. Alternatively set `MANDACARU_PSEUDO_PATH` to a directory that
-contains this checkout as its `oncvpsp/` subfolder.
-
-Then, in a calculation:
+The family is selected as a basis, `basis="ONCVPSP"` (alias `"ONCV"`) or
+`basis={"name": "ONCVPSP", "size": "DZP"}`:
 
 ```python
 from ase.build import molecule
 from mandacaru import Mandacaru
 
 atoms = molecule("H2O")
-atoms.center(vacuum=4.0)          # the cell is the real-space box
-atoms.calc = Mandacaru(method="adapt-vqe",
-                       basis="ONCVPSP",
-                       h=0.25)
-atoms.get_total_energy()          # eV, valence-only Hamiltonian
+atoms.center(vacuum=4.0)
+atoms.calc = Mandacaru(method="adapt-vqe", basis="ONCVPSP", h=0.25)
+atoms.get_potential_energy()
 ```
 
-The family is selected **as a basis**: `basis="ONCVPSP"` (alias `"ONCV"`), or
-`basis={"name": "ONCVPSP", "size": "DZP"}` for a larger valence basis, exactly
-like an all-electron family. Its guide is the *Pseudopotentials* page of the
-Mandacaru manual (`docs/source/guide/pseudopotentials.md`).
+Without `MANDACARU_ONCVPSP_PATH` an ONCVPSP calculation stops before it
+starts, with a `LibraryPathError` that names the command above. The basis
+option `directory="..."` points a single run at another folder of datasets.
 
-## What is in a file
-
-Each `<Symbol>.parquet` is a self-describing Mandacaru pseudopotential record
-(format `mandacaru-pseudopotential`, version 2, `family = "oncvpsp"`), readable
-with `mandacaru.pseudopotentials.oncv.get_oncv(symbol)` or the
-generic `io.load_pseudopotential(path)`. The table holds the radial grid
-(3000 points, 0.01 bohr spacing) and, per angular momentum `l`:
-
-- two pseudo partial waves `pseudo_wave_l{l}_{0,1}` at the reference energies
-  ε₁ (the bound valence eigenvalue) and ε₂ = ε₁ + 1 Ha,
-- the two projectors `projector_l{l}_{0,1}` and their 2×2 Vanderbilt
-  coupling matrix,
-- the screened and ionic channel potentials.
-
-The record also carries the local potential (screened and unscreened), the
-pseudo valence density, the cutoff radii, the residual kinetic energies of
-the optimization, the generalized-norm-conservation residuals and the
-reference energies. All quantities are in atomic units (bohr, hartree);
-Mandacaru converts to eV and Å at its user-facing layer.
-
-## Construction, in brief
+## Construction
 
 Following D. R. Hamann, *Phys. Rev. B* **88**, 085117 (2013):
 
-1. all-electron LDA atom; valence partial waves at two energies per `l`;
-2. pseudo partial waves as spherical-Bessel expansions inside `r_c`, matched
-   in value and derivatives at `r_c`, with generalized norm conservation
-   ⟨φ̃ᵢ|φ̃ⱼ⟩ = ⟨φᵢ|φⱼ⟩ inside the sphere, and the residual kinetic energy
-   beyond a cutoff wavevector minimized;
-3. a polynomial local potential inside `0.9 min r_c`, unscreened with the
-   Hartree and LDA exchange–correlation potentials of the pseudo valence
-   density;
-4. projectors χᵢ = (εᵢ − T − V_loc) φ̃ᵢ with the Vanderbilt coupling
-   D = B⁻¹, B_ij = ⟨φ̃ᵢ|χⱼ⟩.
+1. a scalar-relativistic LDA atom; two partial waves per `l` (the bound level
+   and one scattering energy above it);
+2. smooth pseudo waves as spherical-Bessel expansions inside `r_c`, with
+   generalized norm conservation and the residual kinetic energy beyond
+   `q_c = 5 Bohr⁻¹` minimized exactly;
+3. a polynomial local potential inside `r_cl`, which follows the **largest**
+   cutoff; each channel's two projectors reach out to `r_cl`, where they are
+   `(V_AE − V_loc) φ`, so no channel sits in the bare all-electron well;
+4. a 2×2 coupling matrix per `l`, and unscreening with a partial core density
+   (nonlinear core correction, Louie, Froyen and Cohen 1982).
 
-Every dataset was checked on generation: the bound eigenvalue is reproduced
-to better than 1e-6 Ha with no ghost state below it, the all-electron tail
-is matched, the norm-conservation matrix is satisfied to 1e-8, and the
-logarithmic derivatives agree with the all-electron atom at both reference
-energies. Not included: nonlinear core correction, relativistic terms,
-projectors above the valence `l`; the exchange–correlation functional is LDA.
+## Checks, and the flagged elements
 
-## Regenerating
+Every dataset was checked when it was generated:
 
-From the Mandacaru repository, with the `mandacaru` environment:
+- **ghost states:** the spectrum of every channel, with and without
+  projectors, against the all-electron reference;
+- **scattering:** the phase `arctan L(E)` of the logarithmic derivative,
+  compared with the all-electron atom at the projector radius, within
+  0.05 rad over ε ± 0.5 Ha and 0.3 rad over ε ± 1 Ha.
 
-```python
-from mandacaru.pseudopotentials.oncv import build_oncv_library
-from mandacaru.pseudopotentials.io import library_elements
+When the default construction failed a check, the generator tried raised
+local potentials and balanced cutoffs. **No element holds a ghost state.** An
+element that no repair cleans is still written, with its defect recorded in
+the file; loading it raises a `GhostStateWarning`, and its `repr` says
+`SCATTERING OFF`.
 
-build_oncv_library(library_elements(92), directory="path/to/mandacaru-oncvpsp")
+| Elements | Defect |
+|---|---|
+| Ce, Pr, Nd, Pm, Sm, Eu, Gd, Tb, Dy | `f`-channel phase off by 0.06–0.11 rad |
+| Tl, Pb, Bi, Po, At, Rn | phase of the semicore 4f channel off by 0.49–0.65 rad |
+
+For the compact 4f channel this phase is measured at a radius where the 4f
+wave has all but vanished, so the second row may overstate the error.
+
+## Generating the datasets
+
+With a Mandacaru development install and `MANDACARU_ONCVPSP_PATH` set:
+
+```bash
+mandacaru-build --pp ONCV --relativistic --xc LDA --all --workers 5 --check --ghosts flag --install
 ```
 
-Generation takes 5 s for light elements and up to 150 s for the heaviest, about
-90 minutes for the full set, with under 1 GB of memory. The 2026-09-14 set
-was generated with zero failures.
+`--install` writes into `$MANDACARU_ONCVPSP_PATH/lda/`. The radial kernels
+run in C; the full set takes under two hours on 5 cores.
+
+## File format
+
+Each `<Symbol>.parquet` is a self-describing Mandacaru pseudopotential record
+(format `mandacaru-pseudopotential`, version 2, family `oncvpsp`) on a
+3000-point radial grid (0.01 Bohr out to 30 Bohr). It holds the pseudo waves,
+the projectors and coupling matrices, the local potential (screened and
+unscreened), the valence and partial core densities, plus the generation
+record (functional, relativity, core correction) and any recorded defects.
+All quantities are in atomic units. Read one with
+`mandacaru.pseudopotentials.io.load_pseudopotential(path)`.
 
 ## License
 
-MIT, see `LICENSE`.
+MIT, see [LICENSE](LICENSE).
